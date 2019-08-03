@@ -3,15 +3,11 @@ import mongoose from "mongoose";
 import bodyParser = require("body-parser");
 import * as config from "./config.json";
 import SpotifyWebApi from "spotify-web-api-node";
-import https from "https";
 import fs from "fs";
 import uuidv1 from "uuid/v1";
 
 
 const app = express();
-const key = fs.readFileSync("certificate/server.key", "utf8");
-const certificate = fs.readFileSync("certificate/server.crt", "utf8");
-const server = https.createServer({ key: key, cert: certificate }, app);
 
 const credentials = {
     redirectUri: config.redirectUri,
@@ -96,7 +92,7 @@ mongoose
     .then(result => {
         console.log("Connected to MongoDB!");
         console.log("Express is starting up...");
-        server.listen(8443, () => console.log("Express is now running!"));
+        app.listen(8080, () => console.log("Express is now running!"));
     })
     .catch(err => {
         console.log(err);
