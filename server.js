@@ -51,13 +51,8 @@ var mongoose_1 = __importDefault(require("mongoose"));
 var bodyParser = require("body-parser");
 var config = __importStar(require("./config.json"));
 var spotify_web_api_node_1 = __importDefault(require("spotify-web-api-node"));
-var https_1 = __importDefault(require("https"));
-var fs_1 = __importDefault(require("fs"));
 var v1_1 = __importDefault(require("uuid/v1"));
 var app = express_1.default();
-var key = fs_1.default.readFileSync("certificate/server.key", "utf8");
-var certificate = fs_1.default.readFileSync("certificate/server.crt", "utf8");
-var server = https_1.default.createServer({ key: key, cert: certificate }, app);
 var credentials = {
     redirectUri: config.redirectUri,
     clientId: config.clientId,
@@ -139,7 +134,7 @@ mongoose_1.default
     .then(function (result) {
     console.log("Connected to MongoDB!");
     console.log("Express is starting up...");
-    server.listen(8443, function () { return console.log("Express is now running!"); });
+    app.listen(8080, function () { return console.log("Express is now running!"); });
 })
     .catch(function (err) {
     console.log(err);
