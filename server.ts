@@ -6,6 +6,9 @@ import SpotifyWebApi from "spotify-web-api-node";
 import fs from "fs";
 import uuidv1 from "uuid/v1";
 
+//Mongoose
+import Lobby from "./models/db/lobby";
+
 
 const app = express();
 
@@ -19,8 +22,13 @@ let users: { [id: string] : { spotifyApi: SpotifyWebApi, state: string} } = {};
 
 app.use(bodyParser.json());
 
+//DEBUG
 app.get("/", (req: Request, res: Response) => {
     res.send("Success");
+});
+
+app.get("/users", (req: Request, res: Response) => {
+    res.send(users);
 });
 
 //AUTHENTICATION
@@ -88,7 +96,7 @@ app.post("/logout/:spotifyId", async (req: Request, res: Response) => {
 });
 
 //LOBBIES
-app.get("/lobbies/:id", async (req: Request, res: Response) => {
+app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
     //TODO Check if a lobby with the provided Id exists
     if (req.params["id"] === "99999") {
         res.status(200).send({
@@ -135,9 +143,25 @@ app.get("/lobbies", async (req: Request, res: Response) => {
     }
 });
 
-/*console.log("Connecting to MongoDB...");
+app.post("/lobbies/create", async (req: Request, res: Response) => {
+    let leaderId: string = req.params["leaderSpotifyId"];
+
+    let lobby = new Lobby({ leaderSpotifyId: "something", participantUsers: [], currentSongSpotifyId: null, currenPlayerPosition: 0, queuedSongs: [] })
+});
+
+app.post("/lobbies/join", async (req: Request, res: Response) => {
+    let spotifyId = req.params["spotifyId"];
+    let lobbyId = req.params["lobbyId"];
+});
+
+app.post("/lobbies/leave", async (req: Request, res: Response) => {
+    let spotifyId = req.params["spotifyId"];
+    let lobbyId = req.params["lobbyId"];
+});
+
+console.log("Connecting to MongoDB...");
 mongoose
-    .connect("mongodb://127.0.0.1:27017/smd", { useNewUrlParser: true })
+    .connect("mongodb://10.99.0.88:27017/smd", { useNewUrlParser: true })
     .then(result => {
         console.log("Connected to MongoDB!");
         console.log("Express is starting up...");
@@ -145,6 +169,4 @@ mongoose
     })
     .catch(err => {
         console.log(err);
-    });*/
-console.log("Express is starting up...");
-app.listen(8080, () => console.log("Express is now running!"));
+    });
