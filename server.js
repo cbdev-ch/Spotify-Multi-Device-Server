@@ -47,7 +47,6 @@ var __importStar = (this && this.__importStar) || function (mod) {
 var _this = this;
 Object.defineProperty(exports, "__esModule", { value: true });
 var express_1 = __importDefault(require("express"));
-var mongoose_1 = __importDefault(require("mongoose"));
 var bodyParser = require("body-parser");
 var config = __importStar(require("./config.json"));
 var spotify_web_api_node_1 = __importDefault(require("spotify-web-api-node"));
@@ -63,6 +62,7 @@ app.use(bodyParser.json());
 app.get("/", function (req, res) {
     res.send("Success");
 });
+//AUTHENTICATION
 app.get("/login", function (req, res) {
     var scopes = ["user-read-private"];
     res.redirect(new spotify_web_api_node_1.default(credentials).createAuthorizeURL(scopes, v1_1.default()));
@@ -116,7 +116,7 @@ app.get("/loginstatus/:spotifyId", function (req, res) { return __awaiter(_this,
         return [2 /*return*/];
     });
 }); });
-app.get("/logout/:spotifyId", function (req, res) { return __awaiter(_this, void 0, void 0, function () {
+app.post("/logout/:spotifyId", function (req, res) { return __awaiter(_this, void 0, void 0, function () {
     return __generator(this, function (_a) {
         if (users[req.params["spotifyId"]]) {
             delete users[req.params["spotifyId"]];
@@ -128,14 +128,68 @@ app.get("/logout/:spotifyId", function (req, res) { return __awaiter(_this, void
         return [2 /*return*/];
     });
 }); });
-console.log("Connecting to MongoDB...");
-mongoose_1.default
+//LOBBIES
+app.get("/lobbies/:id", function (req, res) { return __awaiter(_this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+        //TODO Check if a lobby with the provided Id exists
+        if (req.params["id"] === "99999") {
+            res.status(200).send({
+                id: "99999",
+                leaderSpotifyId: "88",
+                participantUsers: [
+                    { spotifyId: "88", spotifyDisplayName: "Adlersson", spotifyProfilePictureUrl: "https://steamuserimages-a.akamaihd.net/ugc/939447311825403335/0C0279F94A44104373CB2807A4BB70B4117EFB9A/" },
+                    { spotifyId: "44", spotifyDisplayName: "Inkognito", spotifyProfilePictureUrl: "https://vignette.wikia.nocookie.net/youtube/images/f/f9/Inkognito_Spastiko.jpg/revision/latest?cb=20170225153545&path-prefix=de" }
+                ],
+                currentSongId: "69",
+                currentPlayerPosition: 0,
+                queuedSongs: [
+                    { spotifyId: "69", queuerId: "44", name: "Mo sicko", artistNames: ["Tracktor Bot", "Drake Bake"], duration: 180, imageUrl: "https://upload.wikimedia.org/wikipedia/en/thumb/0/03/Sicko_Mode_cover.jpg/220px-Sicko_Mode_cover.jpg" },
+                    { spotifyId: "420", queuerId: "88", name: "Rainbow", artistNames: ["Mr. Steal-Your-Girl"], duration: 500, imageUrl: "https://images-na.ssl-images-amazon.com/images/I/61yoTtDxuiL._SX425_.jpg" }
+                ]
+            });
+        }
+        else {
+            res.status(404).send("There is no lobby with the provided Id");
+        }
+        return [2 /*return*/];
+    });
+}); });
+app.get("/lobbies", function (req, res) { return __awaiter(_this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+        if (req.query["userId"]) {
+            //TODO Check if provided user is in a lobby
+            res.send({
+                id: "99999",
+                leaderSpotifyId: "88",
+                participantUsers: [
+                    { spotifyId: "88", spotifyDisplayName: "Adlersson", spotifyProfilePictureUrl: "https://steamuserimages-a.akamaihd.net/ugc/939447311825403335/0C0279F94A44104373CB2807A4BB70B4117EFB9A/" },
+                    { spotifyId: "44", spotifyDisplayName: "Inkognito", spotifyProfilePictureUrl: "https://vignette.wikia.nocookie.net/youtube/images/f/f9/Inkognito_Spastiko.jpg/revision/latest?cb=20170225153545&path-prefix=de" }
+                ],
+                currentSongId: "69",
+                currentPlayerPosition: 0,
+                queuedSongs: [
+                    { spotifyId: "69", queuerId: "44", name: "Mo sicko", artistNames: ["Tracktor Bot", "Drake Bake"], duration: 180, imageUrl: "https://upload.wikimedia.org/wikipedia/en/thumb/0/03/Sicko_Mode_cover.jpg/220px-Sicko_Mode_cover.jpg" },
+                    { spotifyId: "420", queuerId: "88", name: "Rainbow", artistNames: ["Mr. Steal-Your-Girl"], duration: 500, imageUrl: "https://images-na.ssl-images-amazon.com/images/I/61yoTtDxuiL._SX425_.jpg" }
+                ]
+            });
+        }
+        else {
+            //TODO Send all Lobbies
+            res.status(501).send("Not implemented yet");
+        }
+        return [2 /*return*/];
+    });
+}); });
+/*console.log("Connecting to MongoDB...");
+mongoose
     .connect("mongodb://127.0.0.1:27017/smd", { useNewUrlParser: true })
-    .then(function (result) {
-    console.log("Connected to MongoDB!");
-    console.log("Express is starting up...");
-    app.listen(8080, function () { return console.log("Express is now running!"); });
-})
-    .catch(function (err) {
-    console.log(err);
-});
+    .then(result => {
+        console.log("Connected to MongoDB!");
+        console.log("Express is starting up...");
+        app.listen(8080, () => console.log("Express is now running!"));
+    })
+    .catch(err => {
+        console.log(err);
+    });*/
+console.log("Express is starting up...");
+app.listen(8080, function () { return console.log("Express is now running!"); });

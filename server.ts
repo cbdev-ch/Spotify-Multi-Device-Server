@@ -90,8 +90,21 @@ app.post("/logout/:spotifyId", async (req: Request, res: Response) => {
 //LOBBIES
 app.get("/lobbies/:id", async (req: Request, res: Response) => {
     //TODO Check if a lobby with the provided Id exists
-    if (true) {
-        res.status(200).send();
+    if (req.params["id"] === "99999") {
+        res.status(200).send({
+            id: "99999",
+            leaderSpotifyId: "88",
+            participantUsers: [
+                { spotifyId: "88", spotifyDisplayName: "Adlersson", spotifyProfilePictureUrl: "https://steamuserimages-a.akamaihd.net/ugc/939447311825403335/0C0279F94A44104373CB2807A4BB70B4117EFB9A/"},
+                { spotifyId: "44", spotifyDisplayName: "Inkognito", spotifyProfilePictureUrl: "https://vignette.wikia.nocookie.net/youtube/images/f/f9/Inkognito_Spastiko.jpg/revision/latest?cb=20170225153545&path-prefix=de"}
+            ],
+            currentSongId: "69",
+            currentPlayerPosition: 0,
+            queuedSongs: [
+                { spotifyId: "69", queuerId: "44", name: "Mo sicko", artistNames: ["Tracktor Bot", "Drake Bake"], duration: 180, imageUrl: "https://upload.wikimedia.org/wikipedia/en/thumb/0/03/Sicko_Mode_cover.jpg/220px-Sicko_Mode_cover.jpg"},
+                { spotifyId: "420", queuerId: "88", name: "Rainbow", artistNames: ["Mr. Steal-Your-Girl"], duration: 500, imageUrl: "https://images-na.ssl-images-amazon.com/images/I/61yoTtDxuiL._SX425_.jpg"}
+            ]
+        });
     }
     else {
         res.status(404).send("There is no lobby with the provided Id");
@@ -99,7 +112,7 @@ app.get("/lobbies/:id", async (req: Request, res: Response) => {
 });
 
 app.get("/lobbies", async (req: Request, res: Response) => {
-    if (req.params["userId"]) {
+    if (req.query["userId"]) {
         //TODO Check if provided user is in a lobby
         res.send({
             id: "99999",
