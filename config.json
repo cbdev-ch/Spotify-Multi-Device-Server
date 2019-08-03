@@ -1,6 +1,0 @@
-{
-    "clientId": "c07787466e674c54851d918356761786",
-    "clientSecret": "d67a57f7bb484c5ab17aacdc23b23de2",
-    "redirectUri": "https://localhost:8443/callback",
-    "redirectSuccessUri": "https://localhost:8443/success?spotify_id="
-}
