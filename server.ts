@@ -7,8 +7,10 @@ import fs from "fs";
 import uuidv1 from "uuid/v1";
 
 //Mongoose
-import Lobby from "./models/db/lobby";
+import LobbyData from "./models/db/lobbyData";
 
+//API
+import { Lobby, User, Song } from "./models/api/lobby";
 
 const app = express();
 
@@ -50,7 +52,8 @@ app.get("/callback", async (req: Request, res: Response) => {
 
         spotifyApi.getMe().then((me) => {
             users[me.body.id] = { spotifyApi: spotifyApi, state: state };
-            res.status(204).send("<h1>Logged in!</h1>");
+            console.log("Registered " + me.body.id);
+            res.status(204).send();
         }, (err) => {
             console.log(err);
             res.status(500).send(err);
@@ -121,20 +124,42 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
 
 app.get("/lobbies", async (req: Request, res: Response) => {
     if (req.query["userId"]) {
-        //TODO Check if provided user is in a lobby
-        res.send({
-            id: "99999",
-            leaderSpotifyId: "88",
-            participantUsers: [
-                { spotifyId: "88", spotifyDisplayName: "Adlersson", spotifyProfilePictureUrl: "https://steamuserimages-a.akamaihd.net/ugc/939447311825403335/0C0279F94A44104373CB2807A4BB70B4117EFB9A/"},
-                { spotifyId: "44", spotifyDisplayName: "Inkognito", spotifyProfilePictureUrl: "https://vignette.wikia.nocookie.net/youtube/images/f/f9/Inkognito_Spastiko.jpg/revision/latest?cb=20170225153545&path-prefix=de"}
-            ],
-            currentSongId: "69",
-            currentPlayerPosition: 0,
-            queuedSongs: [
-                { spotifyId: "69", queuerId: "44", name: "Mo sicko", artistNames: ["Tracktor Bot", "Drake Bake"], duration: 180, imageUrl: "https://upload.wikimedia.org/wikipedia/en/thumb/0/03/Sicko_Mode_cover.jpg/220px-Sicko_Mode_cover.jpg"},
-                { spotifyId: "420", queuerId: "88", name: "Rainbow", artistNames: ["Mr. Steal-Your-Girl"], duration: 500, imageUrl: "https://images-na.ssl-images-amazon.com/images/I/61yoTtDxuiL._SX425_.jpg"}
-            ]
+        let client = users[req.query["userId"]].spotifyApi;
+        LobbyData.findOne({ participantUserIds: { $all: [req.query["userId"]] } }, async (err, lobbyData) => {
+            if (!err && lobbyData) {
+                let lobby: Lobby = {
+                    id: lobbyData.get("_id"),
+                    leaderSpotifyId: lobbyData.get("leaderSpotifyId"),
+                    participantUsers: await Promise.all(lobbyData.get("participantUserIds").map(async (participantId: string) => {
+                        let me = await users[participantId].spotifyApi.getMe();
+                        let user: User = {
+                            spotifyId: participantId,
+                            spotifyDisplayName: me.body.display_name,
+                            spotifyProfilePictureUrl: me.body.images && me.body.images.length > 0 ? me.body.images[0].url : undefined
+                        }
+                        return user;
+                    })),
+                    currentSongId: lobbyData.get("currentSongSpotifyId"),
+                    currentPlayerPosition: lobbyData.get("currentPlayerPosition"),
+                    queuedSongs: await Promise.all(lobbyData.get("queuedSongs").map(async (songData: any) => {
+                        let track = await client.getTrack(songData["spotifyId"]);
+                        let song: Song = {
+                            spotifyId: songData["spotifyId"],
+                            queuerId: songData["queuerId"],
+                            name: track.body.name,
+                            artistNames: track.body.artists.map(artistData => artistData.name),
+                            duration: track.body.duration_ms / 1000,
+                            imageUrl: track.body.album.images[2].url
+                        }
+                        return song;
+                    }))
+                };
+                res.send(lobby);
+            }
+            else {
+                console.log(err);
+                res.status(404).send();
+            }
         });
     }
     else {
@@ -144,9 +169,11 @@ app.get("/lobbies", async (req: Request, res: Response) => {
 });
 
 app.post("/lobbies/create", async (req: Request, res: Response) => {
-    let leaderId: string = req.params["leaderSpotifyId"];
+    let leaderId: string = req.body["leaderSpotifyId"];
 
-    let lobby = new Lobby({ leaderSpotifyId: "something", participantUsers: [], currentSongSpotifyId: null, currenPlayerPosition: 0, queuedSongs: [] })
+    let lobby = new LobbyData({ leaderSpotifyId: leaderId, participantUserIds: [leaderId ] });
+    lobby.save();
+    res.status(204).send();
 });
 
 app.post("/lobbies/join", async (req: Request, res: Response) => {
@@ -161,7 +188,7 @@ app.post("/lobbies/leave", async (req: Request, res: Response) => {
 
 console.log("Connecting to MongoDB...");
 mongoose
-    .connect("mongodb://10.99.0.88:27017/smd", { useNewUrlParser: true })
+    .connect("mongodb://VLD-COL-1.intnet.ch:27017/smd", { useNewUrlParser: true, useUnifiedTopology: true })
     .then(result => {
         console.log("Connected to MongoDB!");
         console.log("Express is starting up...");
