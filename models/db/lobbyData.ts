@@ -1,4 +1,4 @@
-import { model, Schema } from "mongoose";
+import { model, Schema, Document } from "mongoose";
 
 export default model("LobbyData", new Schema({
     leaderSpotifyId: { type: String, required: true },
@@ -7,6 +7,6 @@ export default model("LobbyData", new Schema({
     currentPlayerPosition: { type: Number, default: 0 },
     queuedSongs: [{
         spotifyId: { type: String },
-        queurId: { type: String }
+        queuerId: { type: String }
     }]
 }, { collection: "lobbies" }));
