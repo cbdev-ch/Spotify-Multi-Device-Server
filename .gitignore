@@ -2,3 +2,4 @@ certificate/*
 node_modules/*
 config.json
 .vscode/*
+dist/*

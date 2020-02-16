@@ -1,9 +1,10 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, response } from "express";
 import mongoose from "mongoose";
 import bodyParser = require("body-parser");
 import * as config from "./config.json";
 import SpotifyWebApi from "spotify-web-api-node";
 import uuidv1 from "uuid/v1";
+import cors from "cors";
 
 //Mongoose Models
 import LobbyData from "./models/db/lobbyData";
@@ -19,8 +20,10 @@ const credentials = {
     clientSecret: config.clientSecret
 }
 
-let users: { [id: string] : { spotifyApi: SpotifyWebApi, state: string} } = {};
+let logins: { [state: string] : { spotifyId: string }} = {};
+let users: { [spotifyId: string] : { spotifyApi: SpotifyWebApi } } = {};
 
+app.use(cors());
 app.use(bodyParser.json());
 
 //DEBUGGING
@@ -39,80 +42,76 @@ app.get("/users", (req: Request, res: Response) => {
 //Forwards to the spotify login
 app.get("/login", (req: Request, res: Response) => {
     let scopes = ["user-read-private"];
+    let state = uuidv1();
 
-    res.redirect(new SpotifyWebApi(credentials).createAuthorizeURL(scopes, uuidv1()));
+    logins[state] = { spotifyId: null };
+    res.redirect(new SpotifyWebApi(credentials).createAuthorizeURL(scopes, state));
 });
 
-//Acts as a callback for the spotify login
-app.get("/callback", async (req: Request, res: Response) => {
-    let code = req.query["code"];
-    let state = req.query["state"];
+//Authenticates states and codes
+app.post("/authenticate", async (req: Request, res: Response) => {
+    let state = req.body["state"];
+    let code = req.body["code"];
 
-    let spotifyApi = new SpotifyWebApi(credentials);
+    // Trust authentication
+    if (logins[state]) {
 
-    spotifyApi.authorizationCodeGrant(code).then((data) => {
-        spotifyApi.setAccessToken(data.body["access_token"]);
-        spotifyApi.setRefreshToken(data.body["refresh_token"]);
+        // Login
+        if (code) {
+            let spotifyApi = new SpotifyWebApi(credentials);
 
-        spotifyApi.getMe().then((me) => {
-            users[me.body.id] = { 
-                spotifyApi: new SpotifyWebApi({ 
-                    accessToken: data.body["access_token"], 
-                    refreshToken: data.body["refresh_token"]
-                }),
-                state: state
-            };
+            spotifyApi.authorizationCodeGrant(code).then((data) => {
+                spotifyApi.setAccessToken(data.body["access_token"]);
+                spotifyApi.setRefreshToken(data.body["refresh_token"]);
 
-            res.status(204).send();
-        }).catch((error) => {
-            console.log(error);
-            res.status(500).send(error);
-        });
-    }).catch((error) => {
-        console.log(error);
-        res.status(500).send(error);
-    });
-});
+                spotifyApi.getMe().then((me) => {
+                    logins[state] = { spotifyId: me.body.id };
+                    users[me.body.id] = { spotifyApi };
 
-//Gets the spotify ID with the unique login state
-app.get("/identification/:state", async (req: Request, res: Response ) => {
-    let id = undefined;
-    Object.keys(users).forEach(key => {
-        if (users[key].state === req.params["state"]) {
-            res.send({ spotifyId: key });
+                    refreshToken(users[me.body.id].spotifyApi, data.body.expires_in);
+
+                    res.send({ spotifyId: me.body.id });
+                }).catch((error) => {
+                    console.log(error);
+                    res.status(500).send(error);
+                });
+            }).catch((error) => {
+                console.log(error);
+                res.status(500).send(error);
+            });
+        } else {
+            if (logins[state].spotifyId) {
+                res.send({ spotifyId: logins[state].spotifyId });
+            }
+            else {
+                res.send({});
+            }
         }
-    });
-
-    if (id === undefined) {
-        res.status(404).send("There is no logged in user with the provided state.");
-    }
-});
-
-//Gets the login status with the spotify ID
-app.get("/loginstatus/:spotifyId", async (req: Request, res: Response) => {
-    if (users[req.params["spotifyId"]]) {
-        res.send({ loginStatus: "logged_in" });
-    }
-
-    else {
-        res.send({ loginStatus: "logged_out" });
-    }
-});
-
-//Does the logout with the spotify ID
-app.post("/logout/:spotifyId", async (req: Request, res: Response) => {
-    if (users[req.params["spotifyId"]]) {
-        delete users[req.params["spotifyId"]];
-        res.status(204).send();
-    }
-    
-    else {
-        res.status(404).send("There is no logged in user with the provided Spotify Id");
+    } else {
+        res.status(401).send();
     }
 });
 
 
 //LOBBIES
+
+//Gets the lobby version
+app.get("/lobbies/version/:id", async (req: Request, res: Response) => {
+    let id = req.params["id"];
+
+    LobbyData.findById(id).then(async (lobbyData) => {
+        if (lobbyData) {
+            res.send({ version: lobbyData.__v });
+        }
+        else {
+            //Version -1 means the lobby got delted
+            res.send({ version: -1 });
+        }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send();
+    });
+});
 
 //Gets all lobbies
 app.get("/lobbies", async (req: Request, res: Response) => {
@@ -174,7 +173,8 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
                         imageUrl: track.body.album.images[2].url
                     }
                     return song;
-                }))
+                })),
+                version: lobbyData.__v ? lobbyData.__v : -2
             };
             res.send(lobby);
         }
@@ -206,7 +206,7 @@ app.patch("/lobbies/join", async (req: Request, res: Response) => {
     let participantId: string = req.query["participantId"];
     let lobbyId: string = req.query["lobbyId"];
 
-    LobbyData.findByIdAndUpdate(lobbyId, { $push: { participantUserIds: participantId }}).then((lobbyData) => {
+    LobbyData.findByIdAndUpdate(lobbyId, { $push: { participantUserIds: participantId }, $inc: { __v: 1 }}).then((lobbyData) => {
         if (lobbyData) {
             res.status(204).send();
         }
@@ -224,8 +224,10 @@ app.patch("/lobbies/leave", async (req: Request, res: Response) => {
     let participantId: string = req.query["participantId"];
     let lobbyId: string = req.query["lobbyId"];
 
-    LobbyData.findByIdAndUpdate(lobbyId, { $pull: { participantUserIds: participantId }}).then((lobbyData) => {
+    LobbyData.findByIdAndUpdate(lobbyId, { $pull: { participantUserIds: participantId, $inc: { __v: 1 }}}).then((lobbyData) => {
         if (lobbyData) {
+            lobbyData.increment();
+            lobbyData.save();
             res.status(204).send();
         }
         else {
@@ -254,6 +256,16 @@ app.delete("/lobbies/close", async (req: Request, res: Response) => {
     });
 });
 
+function refreshToken(client: SpotifyWebApi, expiresIn: number) {
+    if (client) {
+        setTimeout(() => {
+            client.refreshAccessToken().then((data) => {
+                client.setAccessToken(data.body.access_token);
+                refreshToken(client, data.body.expires_in);
+            });
+        }, expiresIn - 300);
+    }
+}
 
 //SERVER AND DATABASE
 
