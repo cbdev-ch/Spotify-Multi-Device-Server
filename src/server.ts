@@ -61,8 +61,9 @@ app.post("/authenticate", async (req: Request, res: Response) => {
             let spotifyApi = new SpotifyWebApi(credentials);
 
             spotifyApi.authorizationCodeGrant(code).then((data) => {
-                spotifyApi.setAccessToken(data.body["access_token"]);
-                spotifyApi.setRefreshToken(data.body["refresh_token"]);
+
+                spotifyApi.setAccessToken(data.body.access_token);
+                spotifyApi.setRefreshToken(data.body.refresh_token);
 
                 spotifyApi.getMe().then((me) => {
                     logins[state] = { spotifyId: me.body.id };
@@ -70,7 +71,7 @@ app.post("/authenticate", async (req: Request, res: Response) => {
 
                     refreshToken(users[me.body.id].spotifyApi, data.body.expires_in);
 
-                    res.send({ spotifyId: me.body.id });
+                    res.send({ authorized: true, spotifyId: me.body.id });
                 }).catch((error) => {
                     console.log(error);
                     res.status(500).send(error);
@@ -81,14 +82,14 @@ app.post("/authenticate", async (req: Request, res: Response) => {
             });
         } else {
             if (logins[state].spotifyId) {
-                res.send({ spotifyId: logins[state].spotifyId });
+                res.send({ authorized: true, spotifyId: logins[state].spotifyId });
             }
             else {
-                res.send({});
+                res.send({ authorized: false });
             }
         }
     } else {
-        res.status(401).send();
+        res.send({ authorized: false });
     }
 });
 
@@ -118,12 +119,12 @@ app.get("/lobbies", async (req: Request, res: Response) => {
     res.status(501).send("Not implemented yet");
 });
 
-//Gets lobby ID with participant ID
+//Search lobby by userId or lobbyId
 app.get("/lobbies/search", async (req: Request, res: Response) => {
     let participantId: string = req.query["participantId"];
+    let lobbyId: string = req.query["lobbyId"];
 
-
-    LobbyData.findOne({ participantUserIds: { $all: [participantId] } }, { _id: 1 }).then((lobbyData) => {
+    LobbyData.findOne({ $or: [{ participantUserIds: { $all: [participantId] } }, { _id: lobbyId }] }, { _id: 1 }).then((lobbyData) => {
         if (lobbyData) {
             res.send({ lobbyId: lobbyData.get("_id") });
         }
@@ -141,20 +142,26 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
     let id = req.params["id"];
     let client = new SpotifyWebApi(credentials);
 
+    console.log("USERS");
+    console.log(users);
+
     LobbyData.findById(id).then(async (lobbyData) => {
+        await client.getMe
         if (lobbyData) {
             let lobby: Lobby = {
                 id: id,
                 leaderSpotifyId: lobbyData.get("leaderSpotifyId"),
-                participantUsers: await Promise.all(lobbyData.get("participantUserIds").map(async (participantId: string) => {
-                    let participant = await users[participantId].spotifyApi.getMe();
+                participantUsers: lobbyData.get("participantUserIds").map(async (participantId: string) => {
+                    console.log("PARTICIPANTS");
+                    console.log(participantId);
+                    let participant = (await users[participantId].spotifyApi.getMe()).body;
                     let user: User = {
                         spotifyId: participantId,
-                        spotifyDisplayName: participant.body.display_name,
-                        spotifyProfilePictureUrl: participant.body.images && participant.body.images.length > 0 ? participant.body.images[0].url : undefined
+                        spotifyDisplayName: participant.display_name,
+                        spotifyProfilePictureUrl: participant.images && participant.images.length > 0 ? participant.images[0].url : undefined
                     }
                     return user;
-                })),
+                }),
                 currentSongId: lobbyData.get("currentSongSpotifyId"),
                 currentPlayerPosition: lobbyData.get("currentPlayerPosition"),
                 queuedSongs: await Promise.all(lobbyData.get("queuedSongs").map(async (songData: any) => {
@@ -189,7 +196,7 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
 
 //Create lobby with leader ID
 app.post("/lobbies/create", async (req: Request, res: Response) => {
-    let leaderId: string = req.query["leaderId"];
+    let leaderId: string = req.body["leaderId"];
 
     let lobby = new LobbyData({ leaderSpotifyId: leaderId, participantUserIds: [leaderId ] });
 
@@ -203,8 +210,8 @@ app.post("/lobbies/create", async (req: Request, res: Response) => {
 
 //Joins lobby with lobby ID and participant ID
 app.patch("/lobbies/join", async (req: Request, res: Response) => {
-    let participantId: string = req.query["participantId"];
-    let lobbyId: string = req.query["lobbyId"];
+    let participantId: string = req.body["participantId"];
+    let lobbyId: string = req.body["lobbyId"];
 
     LobbyData.findByIdAndUpdate(lobbyId, { $push: { participantUserIds: participantId }, $inc: { __v: 1 }}).then((lobbyData) => {
         if (lobbyData) {
@@ -221,8 +228,8 @@ app.patch("/lobbies/join", async (req: Request, res: Response) => {
 
 //Leaves lobby with lobby ID and participant ID
 app.patch("/lobbies/leave", async (req: Request, res: Response) => {
-    let participantId: string = req.query["participantId"];
-    let lobbyId: string = req.query["lobbyId"];
+    let participantId: string = req.body["participantId"];
+    let lobbyId: string = req.body["lobbyId"];
 
     LobbyData.findByIdAndUpdate(lobbyId, { $pull: { participantUserIds: participantId, $inc: { __v: 1 }}}).then((lobbyData) => {
         if (lobbyData) {
@@ -240,8 +247,8 @@ app.patch("/lobbies/leave", async (req: Request, res: Response) => {
 });
 
 //Closes lobby with lobby ID
-app.delete("/lobbies/close", async (req: Request, res: Response) => {
-    let lobbyId: string = req.query["lobbyId"];
+app.delete("/lobbies/close/:lobbyId", async (req: Request, res: Response) => {
+    let lobbyId: string = req.params["lobbyId"];
 
     LobbyData.findByIdAndDelete(lobbyId).then((lobbyData) => {
         if (lobbyData) {
