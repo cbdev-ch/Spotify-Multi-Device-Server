@@ -69,6 +69,10 @@ app.post("/authenticate", async (req: Request, res: Response) => {
                     logins[state] = { spotifyId: me.body.id };
                     users[me.body.id] = { spotifyApi };
 
+                    console.log(me.body.id);
+                    console.log(spotifyApi.getAccessToken());
+                    console.log(users[me.body.id].spotifyApi.getAccessToken());
+
                     refreshToken(users[me.body.id].spotifyApi, data.body.expires_in);
 
                     res.send({ authorized: true, spotifyId: me.body.id });
@@ -146,22 +150,23 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
     console.log(users);
 
     LobbyData.findById(id).then(async (lobbyData) => {
-        await client.getMe
         if (lobbyData) {
+            console.log("START");
             let lobby: Lobby = {
                 id: id,
                 leaderSpotifyId: lobbyData.get("leaderSpotifyId"),
-                participantUsers: lobbyData.get("participantUserIds").map(async (participantId: string) => {
-                    console.log("PARTICIPANTS");
-                    console.log(participantId);
+                participantUsers: await Promise.all(lobbyData.get("participantUserIds").map(async (participantId: string) => {
                     let participant = (await users[participantId].spotifyApi.getMe()).body;
+                    console.log(participantId);
+                    console.log(users[participantId].spotifyApi.getAccessToken());
+                    console.log(participant);
                     let user: User = {
                         spotifyId: participantId,
                         spotifyDisplayName: participant.display_name,
                         spotifyProfilePictureUrl: participant.images && participant.images.length > 0 ? participant.images[0].url : undefined
                     }
                     return user;
-                }),
+                })),
                 currentSongId: lobbyData.get("currentSongSpotifyId"),
                 currentPlayerPosition: lobbyData.get("currentPlayerPosition"),
                 queuedSongs: await Promise.all(lobbyData.get("queuedSongs").map(async (songData: any) => {
@@ -183,6 +188,7 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
                 })),
                 version: lobbyData.__v ? lobbyData.__v : -2
             };
+            console.log("END");
             res.send(lobby);
         }
         else {
