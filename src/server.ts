@@ -11,6 +11,7 @@ import LobbyData from "./models/db/lobbyData";
 
 //API Models
 import { Lobby, User, Song } from "./models/api/lobby";
+import { Player } from "./models/api/player.js";
 
 const app = express();
 
@@ -20,11 +21,21 @@ const credentials = {
     clientSecret: config.clientSecret
 }
 
+let client = new SpotifyWebApi(credentials);
+
 let logins: { [state: string] : { spotifyId: string }} = {};
 let users: { [spotifyId: string] : { spotifyApi: SpotifyWebApi } } = {};
 
+let players: { [lobbyId: string] : { player: Player }} = {};
+
 app.use(cors());
 app.use(bodyParser.json());
+
+client.clientCredentialsGrant().then((data) => {
+    client.setAccessToken(data.body.access_token);
+
+    refreshClientToken(data.body.expires_in);
+});
 
 //DEBUGGING
 
@@ -45,7 +56,7 @@ app.get("/login", (req: Request, res: Response) => {
     let state = uuidv1();
 
     logins[state] = { spotifyId: null };
-    res.redirect(new SpotifyWebApi(credentials).createAuthorizeURL(scopes, state));
+    res.redirect(client.createAuthorizeURL(scopes, state));
 });
 
 //Authenticates states and codes
@@ -58,24 +69,24 @@ app.post("/authenticate", async (req: Request, res: Response) => {
 
         // Login
         if (code) {
-            let spotifyApi = new SpotifyWebApi(credentials);
+            client.authorizationCodeGrant(code).then((data) => {
 
-            spotifyApi.authorizationCodeGrant(code).then((data) => {
-
-                spotifyApi.setAccessToken(data.body.access_token);
-                spotifyApi.setRefreshToken(data.body.refresh_token);
+                let spotifyApi = new SpotifyWebApi({
+                    accessToken: data.body.access_token,
+                    refreshToken: data.body.refresh_token
+                });
 
                 spotifyApi.getMe().then((me) => {
+
                     logins[state] = { spotifyId: me.body.id };
                     users[me.body.id] = { spotifyApi };
 
-                    console.log(me.body.id);
-                    console.log(spotifyApi.getAccessToken());
-                    console.log(users[me.body.id].spotifyApi.getAccessToken());
+                    refreshToken(me.body.id, data.body.expires_in);
 
-                    refreshToken(users[me.body.id].spotifyApi, data.body.expires_in);
-
-                    res.send({ authorized: true, spotifyId: me.body.id });
+                    res.send({
+                        authorized: true,
+                        spotifyId: me.body.id
+                    });
                 }).catch((error) => {
                     console.log(error);
                     res.status(500).send(error);
@@ -86,14 +97,20 @@ app.post("/authenticate", async (req: Request, res: Response) => {
             });
         } else {
             if (logins[state].spotifyId) {
-                res.send({ authorized: true, spotifyId: logins[state].spotifyId });
-            }
-            else {
-                res.send({ authorized: false });
+                res.send({
+                    authorized: true,
+                    spotifyId: logins[state].spotifyId
+                });
+            } else {
+                res.send({
+                    authorized: false
+                });
             }
         }
     } else {
-        res.send({ authorized: false });
+        res.send({
+            authorized: false
+        });
     }
 });
 
@@ -144,22 +161,14 @@ app.get("/lobbies/search", async (req: Request, res: Response) => {
 //Gets lobby wtih lobby ID
 app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
     let id = req.params["id"];
-    let client = new SpotifyWebApi(credentials);
-
-    console.log("USERS");
-    console.log(users);
 
     LobbyData.findById(id).then(async (lobbyData) => {
         if (lobbyData) {
-            console.log("START");
             let lobby: Lobby = {
                 id: id,
                 leaderSpotifyId: lobbyData.get("leaderSpotifyId"),
                 participantUsers: await Promise.all(lobbyData.get("participantUserIds").map(async (participantId: string) => {
                     let participant = (await users[participantId].spotifyApi.getMe()).body;
-                    console.log(participantId);
-                    console.log(users[participantId].spotifyApi.getAccessToken());
-                    console.log(participant);
                     let user: User = {
                         spotifyId: participantId,
                         spotifyDisplayName: participant.display_name,
@@ -167,8 +176,9 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
                     }
                     return user;
                 })),
-                currentSongId: lobbyData.get("currentSongSpotifyId"),
+                currentSongIndex: lobbyData.get("currentSongIndex"),
                 currentPlayerPosition: lobbyData.get("currentPlayerPosition"),
+                isSongPlaying: lobbyData.get("isSongPlaying"),
                 queuedSongs: await Promise.all(lobbyData.get("queuedSongs").map(async (songData: any) => {
                     let queuer = await client.getUser(songData["queuerId"]);
                     let track = await client.getTrack(songData["spotifyId"]);
@@ -186,9 +196,8 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
                     }
                     return song;
                 })),
-                version: lobbyData.__v ? lobbyData.__v : -2
+                version: lobbyData.__v !== undefined ? lobbyData.__v : 0
             };
-            console.log("END");
             res.send(lobby);
         }
         else {
@@ -269,15 +278,158 @@ app.delete("/lobbies/close/:lobbyId", async (req: Request, res: Response) => {
     });
 });
 
-function refreshToken(client: SpotifyWebApi, expiresIn: number) {
-    if (client) {
-        setTimeout(() => {
-            client.refreshAccessToken().then((data) => {
-                client.setAccessToken(data.body.access_token);
-                refreshToken(client, data.body.expires_in);
+
+// PLAYER
+app.patch("/player/previous", async (req: Request, res: Response) => {
+    let lobbyId = req.body["lobbyId"];
+
+    LobbyData.findById(lobbyId).then(async (lobbyData) => {
+        if (lobbyData) {
+            let newSongIndex = 0;
+            let songIndex = lobbyData.get("currentSongIndex");
+
+            if (songIndex > 0) {
+               newSongIndex = songIndex - 1;
+            }
+
+            lobbyData.set("currentSongIndex", newSongIndex);
+            lobbyData.set("currentPlayerPosition", 0);
+
+            lobbyData.__v += 1;
+            lobbyData.save();
+
+            res.send({
+                songId: newSongIndex
             });
-        }, expiresIn - 300);
+        } else {
+            res.send(404).send();
+        }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send();
+    });
+});
+
+app.patch("/player/next", async (req: Request, res: Response) => {
+    let lobbyId = req.body["lobbyId"];
+
+    LobbyData.findById(lobbyId).then(async (lobbyData) => {
+        if (lobbyData) {
+            let newSongIndex = lobbyData.get("queuedSongs").length - 1;
+            let songIndex = lobbyData.get("currentSongIndex");
+
+            if (songIndex < newSongIndex) {
+               newSongIndex = songIndex + 1;
+            }
+
+            lobbyData.set("currentSongIndex", newSongIndex);
+            lobbyData.set("currentPlayerPosition", 0);
+
+            lobbyData.__v += 1;
+            lobbyData.save();
+
+            res.send({
+                songId: newSongIndex
+            });
+        } else {
+            res.send(404).send();
+        }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send();
+    });
+});
+
+app.patch("/player/pause", async (req: Request, res: Response) => {
+    let lobbyId = req.body["lobbyId"];
+
+    LobbyData.findByIdAndUpdate(lobbyId, { $set: { isSongPlaying: false }, $inc: { __v: 1 }}).then((lobbyData) => {
+        if (lobbyData) {
+            res.status(204).send();
+        }
+        else {
+            res.status(404).send();
+        }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send(error);
+    });
+});
+
+app.patch("/player/resume", async (req: Request, res: Response) => {
+    let lobbyId = req.body["lobbyId"];
+
+    LobbyData.findByIdAndUpdate(lobbyId, { $set: { isSongPlaying: true }, $inc: { __v: 1 }}).then((lobbyData) => {
+        if (lobbyData) {
+            res.status(204).send();
+        }
+        else {
+            res.status(404).send();
+        }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send(error);
+    });
+});
+
+app.patch("/player/jump", async (req: Request, res: Response) => {
+    let lobbyId = req.body["lobbyId"];
+    let position = req.body["position"];
+
+    LobbyData.findByIdAndUpdate(lobbyId, { $set: { currentPlayerPosition: position }, $inc: { __v: 1 }}).then((lobbyData) => {
+        if (lobbyData) {
+            res.status(204).send();
+        }
+        else {
+            res.status(404).send();
+        }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send(error);
+    });
+});
+
+//QUEUE
+app.post("/queue/add", async (req: Request, res: Response) => {
+    let lobbyId = req.body["lobbyId"];
+    let queuerId = req.body["queuerId"];
+    let songId = req.body["songId"];
+
+    LobbyData.findByIdAndUpdate(lobbyId, { $push: { queuedSongs: { spotifyId: songId, queuerId } }, $inc: { __v: 1 }}).then((lobbyData) => {
+        if (lobbyData) {
+            res.status(204).send();
+        } else {
+            res.status(404).send();
+        }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send(error);
+    });
+});
+
+function refreshToken(spotifyId: string, expiresIn: number) {
+    let client = new SpotifyWebApi(credentials);
+    let spotifyApi = users[spotifyId].spotifyApi;
+    client.setRefreshToken(spotifyApi.getRefreshToken());
+
+    if (spotifyApi) {
+        setTimeout(() => {
+            console.log("Refresh Access Token on: " + spotifyApi.getAccessToken());
+            client.refreshAccessToken().then((data) => {
+                spotifyApi.setAccessToken(data.body.access_token);
+                refreshToken(spotifyId, data.body.expires_in);
+            });
+        }, (expiresIn - 300) * 1000);
     }
+}
+
+function refreshClientToken(expiresIn: number) {
+    setTimeout(() => {
+        console.log("Refresh Client Access Token");
+        client.refreshAccessToken().then((data) => {
+            refreshClientToken(data.body.expires_in);
+        });
+    }, (expiresIn - 300) * 1000);
 }
 
 //SERVER AND DATABASE
