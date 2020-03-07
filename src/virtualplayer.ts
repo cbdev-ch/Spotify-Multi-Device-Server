@@ -78,4 +78,14 @@ export default class VirtualPlayer implements Player {
         this.position = position;
         this.version += 1;
     }
+
+    queueSong(song: Song) {
+        this.queue.push(song);
+
+        // if is first song begin playing
+        if (this.queue.length === 1) {
+            this.maxPosition = song.duration;
+            this.resume();
+        }
+    }
 }

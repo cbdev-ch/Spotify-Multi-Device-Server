@@ -50,8 +50,20 @@ app.get("/users", (req: Request, res: Response) => {
 });
 
 app.get("/players", (req: Request, res: Response) => {
-    res.send(players);
+    res.send(Object.keys(players).map((key) => {
+        let virtualPlayer = players[key];
+        return {
+            id: virtualPlayer.id,
+            position: virtualPlayer.position,
+            maxPosition: virtualPlayer.maxPosition,
+            isSongPlaying: virtualPlayer.isSongPlaying,
+            queuePosition: virtualPlayer.queuePosition,
+            queue: virtualPlayer.queue,
+            version: virtualPlayer.version
+        };
+    }));
 });
+
 
 
 //AUTHENTICATION
@@ -381,7 +393,7 @@ app.post("/queue/add", async (req: Request, res: Response) => {
             let queuer = await client.getUser(queuerId);
             let track = await client.getTrack(songId);
 
-            player.queue.push({
+            player.queueSong({
                 spotifyId: songId,
                 queuer: {
                     spotifyId: queuer.body.id,
@@ -390,16 +402,21 @@ app.post("/queue/add", async (req: Request, res: Response) => {
                 },
                 name: track.body.name,
                 artistNames: track.body.artists.map(artistData => artistData.name),
-                duration: track.body.duration_ms / 1000,
+                duration: track.body.duration_ms,
                 imageUrl: track.body.album.images[2].url
             });
 
             player.version += 1;
+            lobbyData.__v += 1;
+            lobbyData.save();
 
             res.status(204).send();
         } else {
             res.status(404).send("Lobby not found!");
         }
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send();
     });
 });
 
