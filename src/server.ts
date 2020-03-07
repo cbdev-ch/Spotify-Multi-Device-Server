@@ -11,7 +11,9 @@ import LobbyData from "./models/db/lobbyData";
 
 //API Models
 import { Lobby, User, Song } from "./models/api/lobby";
+import lobbyData from "./models/db/lobbyData";
 import { Player } from "./models/api/player.js";
+import VirtualPlayer from "./virtualplayer.js";
 
 const app = express();
 
@@ -26,7 +28,7 @@ let client = new SpotifyWebApi(credentials);
 let logins: { [state: string] : { spotifyId: string }} = {};
 let users: { [spotifyId: string] : { spotifyApi: SpotifyWebApi } } = {};
 
-let players: { [lobbyId: string] : { player: Player }} = {};
+let players: { [playerId: string] : VirtualPlayer } = {};
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -45,6 +47,10 @@ app.get("/", (req: Request, res: Response) => {
 
 app.get("/users", (req: Request, res: Response) => {
     res.send(users);
+});
+
+app.get("/players", (req: Request, res: Response) => {
+    res.send(players);
 });
 
 
@@ -164,6 +170,7 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
 
     LobbyData.findById(id).then(async (lobbyData) => {
         if (lobbyData) {
+            let player = players[lobbyData.get("playerId")];
             let lobby: Lobby = {
                 id: id,
                 leaderSpotifyId: lobbyData.get("leaderSpotifyId"),
@@ -176,26 +183,9 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
                     }
                     return user;
                 })),
-                currentSongIndex: lobbyData.get("currentSongIndex"),
-                currentPlayerPosition: lobbyData.get("currentPlayerPosition"),
-                isSongPlaying: lobbyData.get("isSongPlaying"),
-                queuedSongs: await Promise.all(lobbyData.get("queuedSongs").map(async (songData: any) => {
-                    let queuer = await client.getUser(songData["queuerId"]);
-                    let track = await client.getTrack(songData["spotifyId"]);
-                    let song: Song = {
-                        spotifyId: songData["spotifyId"],
-                        queuer: {
-                            spotifyId: queuer.body.id,
-                            spotifyDisplayName: queuer.body.display_name,
-                            spotifyProfilePictureUrl: queuer.body.images && queuer.body.images.length > 0 ? queuer.body.images[0].url : undefined
-                        },
-                        name: track.body.name,
-                        artistNames: track.body.artists.map(artistData => artistData.name),
-                        duration: track.body.duration_ms / 1000,
-                        imageUrl: track.body.album.images[2].url
-                    }
-                    return song;
-                })),
+                currentSongIndex: player.queuePosition,
+                queuedSongs: player.queue,
+                playerId: lobbyData.get("playerId"),
                 version: lobbyData.__v !== undefined ? lobbyData.__v : 0
             };
             res.send(lobby);
@@ -213,7 +203,10 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
 app.post("/lobbies/create", async (req: Request, res: Response) => {
     let leaderId: string = req.body["leaderId"];
 
-    let lobby = new LobbyData({ leaderSpotifyId: leaderId, participantUserIds: [leaderId ] });
+    let player = new VirtualPlayer(uuidv1());
+    players[player.id] = player;
+
+    let lobby = new LobbyData({ leaderSpotifyId: leaderId, participantUserIds: [leaderId ], playerId: player.id });
 
     lobby.save().then((result) => {
         res.send({ lobbyId: result.id });
@@ -267,6 +260,7 @@ app.delete("/lobbies/close/:lobbyId", async (req: Request, res: Response) => {
 
     LobbyData.findByIdAndDelete(lobbyId).then((lobbyData) => {
         if (lobbyData) {
+            delete players[lobbyData.get("playerId")];
             res.status(204).send();
         }
         else {
@@ -280,113 +274,98 @@ app.delete("/lobbies/close/:lobbyId", async (req: Request, res: Response) => {
 
 
 // PLAYER
-app.patch("/player/previous", async (req: Request, res: Response) => {
-    let lobbyId = req.body["lobbyId"];
 
-    LobbyData.findById(lobbyId).then(async (lobbyData) => {
-        if (lobbyData) {
-            let newSongIndex = 0;
-            let songIndex = lobbyData.get("currentSongIndex");
+app.get("/player/version/:id", async (req: Request, res: Response) => {
+    let playerId = req.params["id"];
 
-            if (songIndex > 0) {
-               newSongIndex = songIndex - 1;
-            }
-
-            lobbyData.set("currentSongIndex", newSongIndex);
-            lobbyData.set("currentPlayerPosition", 0);
-
-            lobbyData.__v += 1;
-            lobbyData.save();
-
-            res.send({
-                songId: newSongIndex
-            });
-        } else {
-            res.send(404).send();
-        }
-    }).catch((error) => {
-        console.log(error);
-        res.status(500).send();
-    });
+    if (playerId) {
+        res.send({ version: players[playerId].version });
+    } else {
+        res.status(404).send();
+    }
 });
 
-app.patch("/player/next", async (req: Request, res: Response) => {
-    let lobbyId = req.body["lobbyId"];
+app.get("/player/get/:id", async (req: Request, res: Response) => {
+    let playerId = req.params["id"];
 
-    LobbyData.findById(lobbyId).then(async (lobbyData) => {
-        if (lobbyData) {
-            let newSongIndex = lobbyData.get("queuedSongs").length - 1;
-            let songIndex = lobbyData.get("currentSongIndex");
+    if (playerId) {
+        let virtualPlayer = players[playerId];
+        let player: Player = {
+            id: virtualPlayer.id,
+            position: virtualPlayer.position,
+            maxPosition: virtualPlayer.maxPosition,
+            isSongPlaying: virtualPlayer.isSongPlaying,
+            queuePosition: virtualPlayer.queuePosition,
+            queue: virtualPlayer.queue,
+            version: virtualPlayer.version
+        };
 
-            if (songIndex < newSongIndex) {
-               newSongIndex = songIndex + 1;
-            }
-
-            lobbyData.set("currentSongIndex", newSongIndex);
-            lobbyData.set("currentPlayerPosition", 0);
-
-            lobbyData.__v += 1;
-            lobbyData.save();
-
-            res.send({
-                songId: newSongIndex
-            });
-        } else {
-            res.send(404).send();
-        }
-    }).catch((error) => {
-        console.log(error);
-        res.status(500).send();
-    });
+        res.send(player);
+    } else {
+        res.status(404).send();
+    }
 });
 
 app.patch("/player/pause", async (req: Request, res: Response) => {
-    let lobbyId = req.body["lobbyId"];
+    let playerId = req.body["playerId"];
+    let player = players[playerId];
 
-    LobbyData.findByIdAndUpdate(lobbyId, { $set: { isSongPlaying: false }, $inc: { __v: 1 }}).then((lobbyData) => {
-        if (lobbyData) {
-            res.status(204).send();
-        }
-        else {
-            res.status(404).send();
-        }
-    }).catch((error) => {
-        console.log(error);
-        res.status(500).send(error);
-    });
+    if (player) {
+        player.pause();
+        res.status(204).send();
+    } else {
+        res.status(404).send("Player not found!");
+    }
 });
 
 app.patch("/player/resume", async (req: Request, res: Response) => {
-    let lobbyId = req.body["lobbyId"];
+    let playerId = req.body["playerId"];
+    let player = players[playerId];
 
-    LobbyData.findByIdAndUpdate(lobbyId, { $set: { isSongPlaying: true }, $inc: { __v: 1 }}).then((lobbyData) => {
-        if (lobbyData) {
-            res.status(204).send();
-        }
-        else {
-            res.status(404).send();
-        }
-    }).catch((error) => {
-        console.log(error);
-        res.status(500).send(error);
-    });
+    if (player) {
+        player.resume();
+        res.status(204).send();
+    } else {
+        res.status(404).send("Player not found!");
+    }
+});
+
+app.patch("/player/previous", async (req: Request, res: Response) => {
+    let playerId = req.body["playerId"];
+    let player = players[playerId];
+
+    if (player) {
+        player.previous();
+        res.send({ queuePosition: player.queuePosition });
+    } else {
+        res.status(404).send("Player not found!");
+    }
+});
+
+app.patch("/player/next", async (req: Request, res: Response) => {
+    let playerId = req.body["playerId"];
+    let player = players[playerId];
+
+    if (player) {
+        player.next();
+        res.send({ queuePosition: player.queuePosition });
+    } else {
+        res.status(404).send("Player not found!");
+    }
 });
 
 app.patch("/player/jump", async (req: Request, res: Response) => {
-    let lobbyId = req.body["lobbyId"];
+    let playerId = req.body["playerId"];
+    let player = players[playerId];
+
     let position = req.body["position"];
 
-    LobbyData.findByIdAndUpdate(lobbyId, { $set: { currentPlayerPosition: position }, $inc: { __v: 1 }}).then((lobbyData) => {
-        if (lobbyData) {
-            res.status(204).send();
-        }
-        else {
-            res.status(404).send();
-        }
-    }).catch((error) => {
-        console.log(error);
-        res.status(500).send(error);
-    });
+    if (player) {
+        player.jump(position);
+        res.status(204).send();
+    } else {
+        res.status(404).send("Player not found!");
+    }
 });
 
 //QUEUE
@@ -395,15 +374,32 @@ app.post("/queue/add", async (req: Request, res: Response) => {
     let queuerId = req.body["queuerId"];
     let songId = req.body["songId"];
 
-    LobbyData.findByIdAndUpdate(lobbyId, { $push: { queuedSongs: { spotifyId: songId, queuerId } }, $inc: { __v: 1 }}).then((lobbyData) => {
+    LobbyData.findById(lobbyId).then(async (lobbyData) => {
         if (lobbyData) {
+            let player = players[lobbyData.get("playerId")];
+
+            let queuer = await client.getUser(queuerId);
+            let track = await client.getTrack(songId);
+
+            player.queue.push({
+                spotifyId: songId,
+                queuer: {
+                    spotifyId: queuer.body.id,
+                    spotifyDisplayName: queuer.body.display_name,
+                    spotifyProfilePictureUrl: queuer.body.images && queuer.body.images.length > 0 ? queuer.body.images[0].url : undefined
+                },
+                name: track.body.name,
+                artistNames: track.body.artists.map(artistData => artistData.name),
+                duration: track.body.duration_ms / 1000,
+                imageUrl: track.body.album.images[2].url
+            });
+
+            player.version += 1;
+
             res.status(204).send();
         } else {
-            res.status(404).send();
+            res.status(404).send("Lobby not found!");
         }
-    }).catch((error) => {
-        console.log(error);
-        res.status(500).send(error);
     });
 });
 

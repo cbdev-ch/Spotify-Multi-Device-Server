@@ -13,8 +13,9 @@
     "cors": "^2.8.5",
     "express": "^4.17.1",
     "mongoose": "^5.7.5",
+    "rxjs": "^6.5.4",
     "spotify-web-api-node": "^4.0.0",
-    "uuid": "^3.3.3"
+    "uuid": "^3.4.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.6",
