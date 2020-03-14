@@ -5,12 +5,13 @@ import * as config from "./config.json";
 import SpotifyWebApi from "spotify-web-api-node";
 import uuidv1 from "uuid/v1";
 import cors from "cors";
+import QRCode from "qrcode";
 
 //Mongoose Models
 import LobbyData from "./models/db/lobbyData";
 
 //API Models
-import { Lobby, User, Song } from "./models/api/lobby";
+import { Lobby, User, Song, LocalUser } from "./models/api/lobby";
 import lobbyData from "./models/db/lobbyData";
 import { Player } from "./models/api/player.js";
 import VirtualPlayer from "./virtualplayer.js";
@@ -59,18 +60,23 @@ app.get("/players", (req: Request, res: Response) => {
             isSongPlaying: virtualPlayer.isSongPlaying,
             queuePosition: virtualPlayer.queuePosition,
             queue: virtualPlayer.queue,
+            currentDeviceId: virtualPlayer.currentDeviceId,
+            devices: virtualPlayer.devices,
             version: virtualPlayer.version
         };
     }));
 });
 
 
-
 //AUTHENTICATION
 
 //Forwards to the spotify login
 app.get("/login", (req: Request, res: Response) => {
-    let scopes = ["user-read-private"];
+    let scopes = [
+        "user-read-private",
+        "user-modify-playback-state",
+        "user-read-playback-state"
+    ];
     let state = uuidv1();
 
     logins[state] = { spotifyId: null };
@@ -101,9 +107,16 @@ app.post("/authenticate", async (req: Request, res: Response) => {
 
                     refreshToken(me.body.id, data.body.expires_in);
 
+                    let user: LocalUser = {
+                        spotifyId: me.body.id,
+                        displayName: me.body.display_name,
+                        profilePictureUrl: me.body.images && me.body.images.length > 0 ? me.body.images[0].url : undefined,
+                        isPremium: me.body.product === "premium"
+                    }
+
                     res.send({
                         authorized: true,
-                        spotifyId: me.body.id
+                        user
                     });
                 }).catch((error) => {
                     console.log(error);
@@ -187,11 +200,11 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
                 id: id,
                 leaderSpotifyId: lobbyData.get("leaderSpotifyId"),
                 participantUsers: await Promise.all(lobbyData.get("participantUserIds").map(async (participantId: string) => {
-                    let participant = (await users[participantId].spotifyApi.getMe()).body;
+                    let participant = (await client.getUser(participantId)).body;
                     let user: User = {
-                        spotifyId: participantId,
-                        spotifyDisplayName: participant.display_name,
-                        spotifyProfilePictureUrl: participant.images && participant.images.length > 0 ? participant.images[0].url : undefined
+                        spotifyId: participant.id,
+                        displayName: participant.display_name,
+                        profilePictureUrl: participant.images && participant.images.length > 0 ? participant.images[0].url : undefined,
                     }
                     return user;
                 })),
@@ -203,7 +216,7 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
             res.send(lobby);
         }
         else {
-            res.send(404).send();
+            res.status(404).send("Lobby not found!");
         }
     }).catch((error) => {
         console.log(error);
@@ -215,10 +228,10 @@ app.get("/lobbies/get/:id", async (req: Request, res: Response) => {
 app.post("/lobbies/create", async (req: Request, res: Response) => {
     let leaderId: string = req.body["leaderId"];
 
-    let player = new VirtualPlayer(uuidv1());
+    let player = new VirtualPlayer(uuidv1(), users[leaderId].spotifyApi);
     players[player.id] = player;
 
-    let lobby = new LobbyData({ leaderSpotifyId: leaderId, participantUserIds: [leaderId ], playerId: player.id });
+    let lobby = new LobbyData({ leaderSpotifyId: leaderId, participantUserIds: [leaderId], playerId: player.id });
 
     lobby.save().then((result) => {
         res.send({ lobbyId: result.id });
@@ -238,7 +251,7 @@ app.patch("/lobbies/join", async (req: Request, res: Response) => {
             res.status(204).send();
         }
         else {
-            res.status(404).send();
+            res.status(404).send("Lobby not found!");
         }
     }).catch((error) => {
         console.log(error);
@@ -258,7 +271,7 @@ app.patch("/lobbies/leave", async (req: Request, res: Response) => {
             res.status(204).send();
         }
         else {
-            res.status(404).send();
+            res.status(404).send("Lobby not found!");
         }
     }).catch((error) => {
         console.log(error);
@@ -276,11 +289,20 @@ app.delete("/lobbies/close/:lobbyId", async (req: Request, res: Response) => {
             res.status(204).send();
         }
         else {
-            res.status(404).send();
+            res.status(404).send("Lobby not found!");
         }
     }).catch((error) => {
         console.log(error);
         res.status(500).send(error);
+    });
+});
+
+// Invitation
+app.get("/invitation/generate", async (req: Request, res: Response) => {
+    QRCode.toDataURL("https://neture.ch/", {
+        errorCorrectionLevel: 'L',
+    }).then((url) => {
+        res.send(url);
     });
 });
 
@@ -309,12 +331,24 @@ app.get("/player/get/:id", async (req: Request, res: Response) => {
             isSongPlaying: virtualPlayer.isSongPlaying,
             queuePosition: virtualPlayer.queuePosition,
             queue: virtualPlayer.queue,
+            currentDeviceId: virtualPlayer.currentDeviceId,
+            devices: virtualPlayer.devices,
             version: virtualPlayer.version
         };
 
         res.send(player);
     } else {
-        res.status(404).send();
+        res.status(404).send("Player not found!");
+    }
+});
+
+app.get("/player/position/:id", async (req: Request, res: Response) => {
+    let playerId = req.params["id"];
+
+    if (playerId) {
+        res.send({ position: players[playerId].position });
+    } else {
+        res.status(404).send("Player not found!");
     }
 });
 
@@ -380,6 +414,20 @@ app.patch("/player/jump", async (req: Request, res: Response) => {
     }
 });
 
+app.patch("/player/device/select", async (req: Request, res: Response) => {
+    let playerId = req.body["playerId"];
+    let player = players[playerId];
+
+    let deviceId = req.body["deviceId"];
+
+    if (player) {
+        player.selectDevice(deviceId);
+        res.status(204).send();
+    } else {
+        res.status(404).send("Player not found!");
+    }
+});
+
 //QUEUE
 app.post("/queue/add", async (req: Request, res: Response) => {
     let lobbyId = req.body["lobbyId"];
@@ -390,15 +438,16 @@ app.post("/queue/add", async (req: Request, res: Response) => {
         if (lobbyData) {
             let player = players[lobbyData.get("playerId")];
 
-            let queuer = await client.getUser(queuerId);
+            let queuer = (await client.getUser(queuerId)).body;
             let track = await client.getTrack(songId);
 
             player.queueSong({
                 spotifyId: songId,
+                spotifyUri: track.body.uri,
                 queuer: {
-                    spotifyId: queuer.body.id,
-                    spotifyDisplayName: queuer.body.display_name,
-                    spotifyProfilePictureUrl: queuer.body.images && queuer.body.images.length > 0 ? queuer.body.images[0].url : undefined
+                    spotifyId: queuer.id,
+                    displayName: queuer.display_name,
+                    profilePictureUrl: queuer.images && queuer.images.length > 0 ? queuer.images[0].url : undefined,
                 },
                 name: track.body.name,
                 artistNames: track.body.artists.map(artistData => artistData.name),
