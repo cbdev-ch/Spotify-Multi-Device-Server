@@ -78,6 +78,11 @@ app.get("/login", (req: Request, res: Response) => {
         "user-read-playback-state"
     ];
     let state = uuidv1();
+    let origin = req.query["origin"];
+
+    if (origin) {
+        client.setRedirectURI(config.redirectUri + "?origin=" + encodeURIComponent(origin));
+    }
 
     logins[state] = { spotifyId: null };
     res.redirect(client.createAuthorizeURL(scopes, state));
