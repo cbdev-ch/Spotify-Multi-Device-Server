@@ -15,6 +15,8 @@ import { Lobby, User, Song, LocalUser } from "./models/api/lobby";
 import lobbyData from "./models/db/lobbyData";
 import { Player } from "./models/api/player.js";
 import VirtualPlayer from "./virtualplayer.js";
+import { async } from "rxjs/internal/scheduler/async";
+import { stat } from "fs";
 
 const app = express();
 
@@ -26,7 +28,7 @@ const credentials = {
 
 let client = new SpotifyWebApi(credentials);
 
-let logins: { [state: string] : { spotifyId: string }} = {};
+let logins: { [state: string] : { spotifyId: string, authorized: boolean }} = {};
 let users: { [spotifyId: string] : { spotifyApi: SpotifyWebApi } } = {};
 
 let players: { [playerId: string] : VirtualPlayer } = {};
@@ -78,76 +80,76 @@ app.get("/login", (req: Request, res: Response) => {
         "user-read-playback-state"
     ];
     let state = uuidv1();
-    let origin = req.query["origin"];
 
-    if (origin) {
-        client.setRedirectURI(config.redirectUri + "?origin=" + encodeURIComponent(origin));
-    }
-
-    logins[state] = { spotifyId: null };
+    logins[state] = { spotifyId: null, authorized: null };
     res.redirect(client.createAuthorizeURL(scopes, state));
 });
 
-//Authenticates states and codes
-app.post("/authenticate", async (req: Request, res: Response) => {
+// Callback from spotify
+app.get("/callback", async(req: Request, res: Response) => {
     let state = req.body["state"];
     let code = req.body["code"];
 
-    // Trust authentication
-    if (logins[state]) {
+    if (code) {
+        client.authorizationCodeGrant(code).then((data) => {
 
-        // Login
-        if (code) {
-            client.authorizationCodeGrant(code).then((data) => {
+            let spotifyApi = new SpotifyWebApi({
+                accessToken: data.body.access_token,
+                refreshToken: data.body.refresh_token
+            });
 
-                let spotifyApi = new SpotifyWebApi({
-                    accessToken: data.body.access_token,
-                    refreshToken: data.body.refresh_token
-                });
+            spotifyApi.getMe().then((me) => {
+                logins[state] = { spotifyId: me.body.id, authorized: true };
+                users[me.body.id] = { spotifyApi };
 
-                spotifyApi.getMe().then((me) => {
+                refreshToken(me.body.id, data.body.expires_in);
 
-                    logins[state] = { spotifyId: me.body.id };
-                    users[me.body.id] = { spotifyApi };
-
-                    refreshToken(me.body.id, data.body.expires_in);
-
-                    let user: LocalUser = {
-                        spotifyId: me.body.id,
-                        displayName: me.body.display_name,
-                        profilePictureUrl: me.body.images && me.body.images.length > 0 ? me.body.images[0].url : undefined,
-                        isPremium: me.body.product === "premium"
-                    }
-
-                    res.send({
-                        authorized: true,
-                        user
-                    });
-                }).catch((error) => {
-                    console.log(error);
-                    res.status(500).send(error);
-                });
+                res.send("Successfully logged in!");
+                return;
             }).catch((error) => {
                 console.log(error);
                 res.status(500).send(error);
             });
-        } else {
-            if (logins[state].spotifyId) {
-                res.send({
-                    authorized: true,
-                    spotifyId: logins[state].spotifyId
-                });
-            } else {
-                res.send({
-                    authorized: false
-                });
-            }
-        }
-    } else {
-        res.send({
-            authorized: false
+        }).catch((error) => {
+            console.log(error);
+            res.status(500).send(error);
         });
+    } else {
+        res.send("Failed to log in!");
     }
+
+    logins[state] = { spotifyId: undefined, authorized: false };
+});
+
+//Authenticates states
+app.post("/authenticate", async (req: Request, res: Response) => {
+    let state = req.body["state"];
+    let login = logins[state];
+
+    // Trust authentication
+    if (login && login.authorized) {
+        if (users[login.spotifyId]) {
+
+            let me = await users[login.spotifyId].spotifyApi.getMe();
+            let user: LocalUser = {
+                spotifyId: me.body.id,
+                displayName: me.body.display_name,
+                profilePictureUrl: me.body.images && me.body.images.length > 0 ? me.body.images[0].url : undefined,
+                isPremium: me.body.product === "premium"
+            }
+
+            res.send({
+                authorized: true,
+                user
+            });
+
+            return;
+        }
+    }
+
+    res.send({
+        authorized: false
+    });
 });
 
 
