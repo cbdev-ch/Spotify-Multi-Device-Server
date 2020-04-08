@@ -79,7 +79,7 @@ app.get("/login", (req: Request, res: Response) => {
         "user-modify-playback-state",
         "user-read-playback-state"
     ];
-    let state = uuidv1();
+    let state = req.query["state"];
 
     logins[state] = { spotifyId: null, authorized: null };
     res.redirect(client.createAuthorizeURL(scopes, state));
@@ -87,8 +87,8 @@ app.get("/login", (req: Request, res: Response) => {
 
 // Callback from spotify
 app.get("/callback", async(req: Request, res: Response) => {
-    let state = req.body["state"];
-    let code = req.body["code"];
+    let state = req.query["state"];
+    let code = req.query["code"];
 
     if (code) {
         client.authorizationCodeGrant(code).then((data) => {
@@ -104,8 +104,8 @@ app.get("/callback", async(req: Request, res: Response) => {
 
                 refreshToken(me.body.id, data.body.expires_in);
 
-                res.send("Successfully logged in!");
-                return;
+                res.type('html');
+                res.send('<script type="text/javascript">window.close();</script>');
             }).catch((error) => {
                 console.log(error);
                 res.status(500).send(error);
@@ -115,35 +115,39 @@ app.get("/callback", async(req: Request, res: Response) => {
             res.status(500).send(error);
         });
     } else {
-        res.send("Failed to log in!");
+        logins[state] = { spotifyId: undefined, authorized: false };
+        res.type('html');
+        res.send('<script type="text/javascript">window.close();</script>');
     }
-
-    logins[state] = { spotifyId: undefined, authorized: false };
 });
 
 //Authenticates states
 app.post("/authenticate", async (req: Request, res: Response) => {
     let state = req.body["state"];
-    let login = logins[state];
 
-    // Trust authentication
-    if (login && login.authorized) {
-        if (users[login.spotifyId]) {
+    if (state) {
+        let login = logins[state];
 
-            let me = await users[login.spotifyId].spotifyApi.getMe();
-            let user: LocalUser = {
-                spotifyId: me.body.id,
-                displayName: me.body.display_name,
-                profilePictureUrl: me.body.images && me.body.images.length > 0 ? me.body.images[0].url : undefined,
-                isPremium: me.body.product === "premium"
+        // Trust authentication
+        if (login && login.authorized) {
+            if (users[login.spotifyId]) {
+
+                let me = await users[login.spotifyId].spotifyApi.getMe();
+                let user: LocalUser = {
+                    spotifyId: me.body.id,
+                    displayName: me.body.display_name,
+                    profilePictureUrl: me.body.images && me.body.images.length > 0 ? me.body.images[0].url : undefined,
+                    footprint: state,
+                    isPremium: me.body.product === "premium"
+                }
+
+                res.send({
+                    authorized: true,
+                    user
+                });
+
+                return;
             }
-
-            res.send({
-                authorized: true,
-                user
-            });
-
-            return;
         }
     }
 
