@@ -1,4 +1,4 @@
-import express, { Request, Response, response } from "express";
+import express, { Request, Response, response, urlencoded } from "express";
 import mongoose from "mongoose";
 import bodyParser = require("body-parser");
 import * as config from "./config.json";
@@ -17,6 +17,7 @@ import { Player } from "./models/api/player.js";
 import VirtualPlayer from "./virtualplayer.js";
 import { async } from "rxjs/internal/scheduler/async";
 import { stat } from "fs";
+import { Invitation } from "./models/api/invitation";
 
 const app = express();
 
@@ -32,6 +33,8 @@ let logins: { [state: string] : { spotifyId: string, authorized: boolean }} = {}
 let users: { [spotifyId: string] : { spotifyApi: SpotifyWebApi } } = {};
 
 let players: { [playerId: string] : VirtualPlayer } = {};
+
+let invitations: string[] = [];
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -309,12 +312,45 @@ app.delete("/lobbies/close/:lobbyId", async (req: Request, res: Response) => {
 });
 
 // Invitation
-app.get("/invitation/generate", async (req: Request, res: Response) => {
-    QRCode.toDataURL("https://neture.ch/", {
-        errorCorrectionLevel: 'L',
-    }).then((url) => {
-        res.send(url);
-    });
+app.post("/invitation/generate", async (req: Request, res: Response) => {
+    let lobbyId: string = req.body["lobbyId"];
+
+    if (lobbyId) {
+        let id = uuidv1();
+        let url = config.clientPage + "/invitation/" + lobbyId + "/?id=" + encodeURIComponent(id);
+
+        QRCode.toDataURL(url, {
+            errorCorrectionLevel: 'L',
+        }).then((dataUrl) => {
+            let invitation: Invitation = {
+                id,
+                url,
+                qrcode: dataUrl
+            };
+
+            invitations.push()
+            res.send(invitation);
+        }).catch((error) => {
+            console.log(error);
+            res.status(500).send(error);
+        });
+    } else {
+        res.status(400).send("Body parameter 'lobbyId' missing!");
+    }
+});
+
+app.get("/invitation/verify/:id", async (req: Request, res: Response) => {
+    let invitationId = req.params["id"];
+
+    if (invitations.find(id => id === invitationId)) {
+        res.send({
+            verified: true
+        });
+    } else {
+        res.send({
+            verified: false
+        });
+    }
 });
 
 
@@ -437,6 +473,16 @@ app.patch("/player/device/select", async (req: Request, res: Response) => {
     } else {
         res.status(404).send("Player not found!");
     }
+});
+
+//SEARCH
+app.get("/search/song", async (req: Request, res: Response) => {
+    let query = req.params["query"];
+    let limit = req.params["limit"];
+
+    client.searchTracks(query, {
+        market: 'CH'
+    })
 });
 
 //QUEUE
