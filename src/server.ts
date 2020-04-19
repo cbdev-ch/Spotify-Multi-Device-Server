@@ -11,13 +11,15 @@ import QRCode from "qrcode";
 import LobbyData from "./models/db/lobbyData";
 
 //API Models
-import { Lobby, User, Song, LocalUser } from "./models/api/lobby";
-import lobbyData from "./models/db/lobbyData";
 import { Player } from "./models/api/player.js";
-import VirtualPlayer from "./virtualplayer.js";
-import { async } from "rxjs/internal/scheduler/async";
-import { stat } from "fs";
 import { Invitation } from "./models/api/invitation";
+
+//Core
+import VirtualPlayer from "./virtualplayer.js";
+import { LocalUser } from "./models/api/localuser";
+import { User } from "./models/api/user";
+import { Lobby } from "./models/api/lobby";
+import { Song } from "./models/api/song";
 
 const app = express();
 
@@ -477,12 +479,33 @@ app.patch("/player/device/select", async (req: Request, res: Response) => {
 
 //SEARCH
 app.get("/search/song", async (req: Request, res: Response) => {
-    let query = req.params["query"];
-    let limit = req.params["limit"];
+    let query = req.query["query"];
+    let limit = +req.query["limit"];
+    let market = req.query["market"];
 
     client.searchTracks(query, {
-        market: 'CH'
-    })
+        market,
+        limit,
+        offset: 0
+    }).then((result) => {
+        let songs: Song[] = [];
+
+        for (let song of result.body.tracks.items) {
+            songs.push({
+                spotifyId: song.id,
+                spotifyUri: song.uri,
+                name: song.name,
+                artistNames: song.artists.map(artistData => artistData.name),
+                duration: song.duration_ms,
+                imageUrl: song.album.images[2].url
+            });
+        }
+
+        res.send(songs);
+    }).catch((error) => {
+        console.log(error);
+        res.status(500).send(error);
+    });
 });
 
 //QUEUE

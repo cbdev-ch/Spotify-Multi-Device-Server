@@ -1,7 +1,8 @@
-import { Song } from "./models/api/lobby";
 import { Player, Device } from "./models/api/player";
 import { Observable, BehaviorSubject } from "rxjs";
 import SpotifyWebApi = require("spotify-web-api-node");
+import { Song } from "./models/api/song";
+import { QueuedSong } from "./models/api/queuedsong";
 
 export default class VirtualPlayer implements Player {
     id: string;
@@ -10,7 +11,7 @@ export default class VirtualPlayer implements Player {
     isSongPlaying: boolean;
 
     queuePosition: number;
-    queue: Song[];
+    queue: QueuedSong[];
 
     currentDeviceId: string;
     devices: Device[];
@@ -42,7 +43,8 @@ export default class VirtualPlayer implements Player {
                     devices.push({
                         spotifyid: device.id,
                         name: device.name,
-                        type: device.type
+                        type: device.type,
+                        isActive: device.is_active
                     });
                 }
 
@@ -58,12 +60,12 @@ export default class VirtualPlayer implements Player {
 
     selectDevice(deviceId: string) {
         this.host.transferMyPlayback({
-            device_ids: [deviceId],
-            play: true
+            // @ts-ignore
+            deviceIds: [deviceId]
         }).then(() => {
             this.currentDeviceId = deviceId;
             this.version += 1;
-        }).catch((error) => {
+        }).catch((error: any) => {
             this.pause();
             console.log(error);
         });
@@ -71,29 +73,45 @@ export default class VirtualPlayer implements Player {
 
     resume() {
         if (!this.isSongPlaying) {
-
-            this.host.play({
-                uris: [this.queue[this.queuePosition].spotifyUri],
-                position_ms: this.position // doesn't work at the moment
+            new Promise<void>((resolve, reject) => {
+                if (!this.devices.find(device => device.isActive)) {
+                    let deviceId = this.devices[0].spotifyid;
+                    this.host.transferMyPlayback({
+                        // @ts-ignore
+                        deviceIds: [deviceId]
+                    }).then(() => {
+                        this.currentDeviceId = deviceId;
+                        resolve();
+                    }).catch((error: any) => {
+                        reject(error);
+                    });
+                } else {
+                    resolve();
+                }
             }).then(() => {
-                this.host.seek(this.position).then(() => {
-                    this.isSongPlaying = true;
-
-                    this.clock = setInterval(() => {
-                        if (this.position >= this.maxPosition) {
-                            this.next();
-                        }
-        
-                        this.position += 200;
-                    }, 200);
-
-                    this.version += 1;
+                this.host.play({
+                    uris: [this.queue[this.queuePosition].spotifyUri],
+                    position_ms: this.position // doesn't work at the moment
+                }).then(() => {
+                    this.host.seek(this.position).then(() => {
+                        this.isSongPlaying = true;
+    
+                        this.clock = setInterval(() => {
+                            if (this.position >= this.maxPosition) {
+                                this.next();
+                            }
+            
+                            this.position += 200;
+                        }, 200);
+    
+                        this.version += 1;
+                    }).catch((error) => {
+                        console.log(error);
+                    });
                 }).catch((error) => {
+                    this.pause();
                     console.log(error);
                 });
-            }).catch((error) => {
-                this.pause();
-                console.log(error);
             });
         }
     }
@@ -163,7 +181,7 @@ export default class VirtualPlayer implements Player {
         });
     }
 
-    queueSong(song: Song) {
+    queueSong(song: QueuedSong) {
         this.queue.push(song);
 
         // if is first song begin playing

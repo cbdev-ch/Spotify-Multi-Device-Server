@@ -1,30 +1,13 @@
+import { User } from './user';
+import { QueuedSong } from './queuedsong';
+
+// Lobby Object storing data of lobbies
 export interface Lobby {
     id: string; //12-byte Id
     leaderSpotifyId: string;
     participantUsers: User[];
     currentSongIndex: number;
-    queuedSongs: Song[];
+    queuedSongs: QueuedSong[];
     playerId: string;
     version: number;
-}
-
-export interface LocalUser extends User {
-    footprint: string; // spotify login state
-    isPremium: boolean;
-  }
-
-export interface User {
-    spotifyId: string;
-    displayName: string | undefined;
-    profilePictureUrl: string | undefined;
-}
-
-export interface Song {
-    spotifyId: string;
-    spotifyUri: string;
-    queuer: User;
-    name: string;
-    artistNames: string[];
-    duration: number; //in ms
-    imageUrl: string;
 }
