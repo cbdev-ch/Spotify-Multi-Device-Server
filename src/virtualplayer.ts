@@ -72,7 +72,7 @@ export default class VirtualPlayer implements Player {
     }
 
     resume() {
-        if (!this.isSongPlaying) {
+        if (!this.isSongPlaying && this.devices.length > 0) {
             new Promise<void>((resolve, reject) => {
                 if (!this.devices.find(device => device.isActive)) {
                     let deviceId = this.devices[0].spotifyid;
